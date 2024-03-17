@@ -80,7 +80,7 @@ module Rake
       end.flatten
     end
 
-    def make_makefile_cmd(root_path, tmp_path, extconf, cross_platform) # :nodoc:
+    def make_makefile_cmd(root_path, tmp_path, extconf, cross_platform, rbconfig_file = nil) # :nodoc:
       # include current directory
       include_dirs = ['.'].concat(@config_includes).uniq.join(File::PATH_SEPARATOR)
 
@@ -94,6 +94,7 @@ module Rake
 
       # add all the options
       cmd += @config_options
+      cmd += ["--target-rbconfig=#{rbconfig_file}"] if rbconfig_file
       cmd += cross_config_options(cross_platform) if cross_platform
       cmd += extra_options
 
@@ -124,7 +125,7 @@ module Rake
       end
     end
 
-    def define_compile_tasks(for_platform = nil, ruby_ver = RUBY_VERSION)
+    def define_compile_tasks(for_platform = nil, ruby_ver = RUBY_VERSION, rbconfig_file = nil)
       # platform usage
       platf = for_platform || platform
 
@@ -202,13 +203,14 @@ Java extension should be preferred.
       # makefile depends of tmp_dir and config_script
       # tmp/extension_name/Makefile
       file "#{tmp_path}/Makefile" => [tmp_path, extconf] do |t|
-        if t.prerequisites.include?("#{tmp_path}/fake.rb")
+        if t.prerequisites.include?("#{tmp_path}/fake.rb") || t.prerequisites.include?(rbconfig_file)
           cross_platform = platf
         else
           cross_platform = nil
         end
 
-        command = make_makefile_cmd(Dir.pwd, tmp_path, extconf, cross_platform)
+        command = make_makefile_cmd(Dir.pwd, tmp_path, extconf, cross_platform,
+                                    Gem::Version.new(ruby_ver) >= "3.4" ? rbconfig_file : nil)
 
         chdir tmp_path do
           sh(*command)
@@ -416,45 +418,52 @@ Java extension should be preferred.
       mkmf_file = File.expand_path(File.join(File.dirname(rbconfig_file), '..', 'mkmf.rb'))
 
       # define compilation tasks for cross platform!
-      define_compile_tasks(for_platform, ruby_ver)
+      define_compile_tasks(for_platform, ruby_ver, rbconfig_file)
 
       # chain fake.rb and mkmf.rb to Makefile generation
-      file "#{tmp_path}/Makefile" => ["#{tmp_path}/fake.rb",
-                                      "#{tmp_path}/mkmf.rb"]
+      file "#{tmp_path}/Makefile" => ["#{tmp_path}/mkmf.rb"]
 
-      # copy the rbconfig from the cross-ruby location and
-      # genearte fake.rb for different ruby versions
-      file "#{tmp_path}/fake.rb" => [rbconfig_file] do |t|
-        File.open(t.name, 'w') do |f|
-          # Keep the original RbConfig::CONFIG["ENABLE_SHARED"] to use
-          # the same RubyGems extension directory. See also
-          # Gem::BasicSpecificaion#extenions_dir and
-          # Gem.extension_api_version.
-          #
-          # if RbConfig::CONFIG["ENABLE_SHARED"] == "no"
-          #   "extensions/x86_64-linux/2.5.0-static"
-          # else
-          #   "extensions/x86_64-linux/2.5.0"
-          # end
-          f.puts("require 'rbconfig'")
-          f.puts("original_enable_shared = RbConfig::CONFIG['ENABLE_SHARED']")
-          f.puts(fake_rb(for_platform, ruby_ver))
-          f.puts("require #{t.prerequisites.first.dump}")
-          f.puts("RbConfig::CONFIG['ENABLE_SHARED'] = original_enable_shared")
+      if Gem::Version.new(ruby_ver) >= "3.4"
+        file "#{tmp_path}/Makefile" => [rbconfig_file]
+        file "#{tmp_path}/mkmf.rb" => [mkmf_file] do |t|
+          FileUtils.cp(t.prerequisites.first, t.name)
         end
-      end
-
-      # copy mkmf from cross-ruby location
-      file "#{tmp_path}/mkmf.rb" => [mkmf_file] do |t|
-        File.open(t.name, 'w') do |f|
-          content = File.read(t.prerequisites.first)
-          content.sub!(/^(require ')rbconfig(')$/, '\\1fake\\2')
-          if ruby_ver < "1.9" && "1.9" <= RUBY_VERSION
-            content.sub!(/^(      break )\*(defaults)$/, '\\1\\2.first')
-            content.sub!(/^(    return )\*(defaults)$/, '\\1\\2.first')
-            content.sub!(/^(  mfile\.)print( configuration\(srcprefix\))$/, '\\1puts\\2')
+      else
+        file "#{tmp_path}/Makefile" => ["#{tmp_path}/fake.rb"]
+        # copy the rbconfig from the cross-ruby location and
+        # genearte fake.rb for different ruby versions
+        file "#{tmp_path}/fake.rb" => [rbconfig_file] do |t|
+          File.open(t.name, 'w') do |f|
+            # Keep the original RbConfig::CONFIG["ENABLE_SHARED"] to use
+            # the same RubyGems extension directory. See also
+            # Gem::BasicSpecificaion#extenions_dir and
+            # Gem.extension_api_version.
+            #
+            # if RbConfig::CONFIG["ENABLE_SHARED"] == "no"
+            #   "extensions/x86_64-linux/2.5.0-static"
+            # else
+            #   "extensions/x86_64-linux/2.5.0"
+            # end
+            f.puts("require 'rbconfig'")
+            f.puts("original_enable_shared = RbConfig::CONFIG['ENABLE_SHARED']")
+            f.puts(fake_rb(for_platform, ruby_ver))
+            f.puts("require #{t.prerequisites.first.dump}")
+            f.puts("RbConfig::CONFIG['ENABLE_SHARED'] = original_enable_shared")
           end
-          f.write content
+        end
+
+        # copy mkmf from cross-ruby location
+        file "#{tmp_path}/mkmf.rb" => [mkmf_file] do |t|
+          File.open(t.name, 'w') do |f|
+            content = File.read(t.prerequisites.first)
+            content.sub!(/^(require ')rbconfig(')$/, '\\1fake\\2')
+            if ruby_ver < "1.9" && "1.9" <= RUBY_VERSION
+              content.sub!(/^(      break )\*(defaults)$/, '\\1\\2.first')
+              content.sub!(/^(    return )\*(defaults)$/, '\\1\\2.first')
+              content.sub!(/^(  mfile\.)print( configuration\(srcprefix\))$/, '\\1puts\\2')
+            end
+            f.write content
+          end
         end
       end
 

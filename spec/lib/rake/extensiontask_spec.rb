@@ -747,10 +747,17 @@ describe Rake::ExtensionTask do
 
         context 'fake' do
           it 'should chain fake task to Makefile generation' do
-            Rake::Task["tmp/universal-unknown/extension_one/#{@ruby_ver}/Makefile"].prerequisites.should include("tmp/universal-unknown/extension_one/#{@ruby_ver}/fake.rb")
+            if Gem::Version.new(@ruby_ver) >= "3.4"
+              Rake::Task["tmp/universal-unknown/extension_one/#{@ruby_ver}/Makefile"].prerequisites.should include(@config_path)
+            else
+              Rake::Task["tmp/universal-unknown/extension_one/#{@ruby_ver}/Makefile"].prerequisites.should include("tmp/universal-unknown/extension_one/#{@ruby_ver}/fake.rb")
+            end
           end
 
           it 'should chain rbconfig tasks to fake.rb generation' do
+            if Gem::Version.new(@ruby_ver) >= "3.4"
+              skip "fake.rb is not generated for Ruby 3.4 or later"
+            end
             Rake::Task["tmp/universal-unknown/extension_one/#{@ruby_ver}/fake.rb"].prerequisites.should include(@config_path)
           end
         end
