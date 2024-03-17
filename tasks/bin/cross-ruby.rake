@@ -70,11 +70,11 @@ RUBY_CC_VERSIONS.split(":").each do |ruby_cc_version|
   # Extract the sources
   source_file = RUBY_SOURCE ? RUBY_SOURCE.split('/').last : "#{ruby_cc_version}.tar.gz"
   file source_dir => ["#{USER_HOME}/sources/#{source_file}"] do |t|
-    t.prerequisites.each { |f| sh "tar xf #{File.basename(f)}", chdir: File.dirname(t.name) }
+    t.prerequisites.each { |f| sh "tar xf #{f} --strip-components=1", chdir: t.name }
   end
 
   # ruby source file should be stored there
-  file "#{USER_HOME}/sources/#{ruby_cc_version}.tar.gz" => ["#{USER_HOME}/sources"] do |t|
+  file "#{USER_HOME}/sources/#{source_file}" => ["#{USER_HOME}/sources"] do |t|
     # download the source file using wget or curl
     if RUBY_SOURCE
       url = RUBY_SOURCE
@@ -109,8 +109,12 @@ RUBY_CC_VERSIONS.split(":").each do |ruby_cc_version|
       end
     end
 
+    configure_file = File.expand_path("#{USER_HOME}/sources/#{ruby_cc_version}/configure")
+    file configure_file => [source_dir] do |t|
+      sh "./autogen.sh", chdir: File.dirname(t.name) if File.exist?("#{source_dir}/autogen.sh")
+    end
     # generate the makefile in a clean build location
-    file "#{build_dir}/Makefile" => [build_dir, source_dir] do |t|
+    file "#{build_dir}/Makefile" => [build_dir, source_dir, configure_file] do |t|
 
       options = [
         "--host=#{mingw_host}",
@@ -124,7 +128,7 @@ RUBY_CC_VERSIONS.split(":").each do |ruby_cc_version|
       # Force Winsock2 for Ruby 1.8, 1.9 defaults to it
       options << "--with-winsock2" if major == "1.8"
       options << "--prefix=#{install_dir}"
-      sh File.expand_path("#{USER_HOME}/sources/#{ruby_cc_version}/configure"), *options, chdir: File.dirname(t.name)
+      sh configure_file, *options, chdir: File.dirname(t.name)
     end
 
     # make
